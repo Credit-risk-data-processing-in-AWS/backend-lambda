@@ -1,0 +1,89 @@
+name: Deploy Lambda to AWS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend-lambda/**'
+      - '.github/workflows/deploy-lambda.yml'
+  workflow_dispatch: # Permite ejecutar manualmente desde GitHub UI
+
+env:
+  AWS_REGION: us-east-1
+  LAMBDA_FUNCTION_NAME: ExperianRiskAPIFunction
+  S3_BUCKET: experian-risk-data-geoffrey
+
+jobs:
+  deploy:
+    name: Deploy Lambda Function
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package Lambda function
+        run: |
+          cd backend-lambda
+          zip -r lambda_deployment.zip lambda_function.py
+          echo "✓ Lambda packaged successfully"
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp backend-lambda/lambda_deployment.zip \
+            s3://${{ env.S3_BUCKET }}/lambda/lambda_deployment.zip
+          echo "✓ Uploaded to S3"
+
+      - name: Update Lambda function
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --s3-bucket ${{ env.S3_BUCKET }} \
+            --s3-key lambda/lambda_deployment.zip
+          echo "✓ Lambda function updated"
+
+      - name: Wait for Lambda update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }}
+          echo "✓ Lambda is ready"
+
+      - name: Get Lambda info
+        run: |
+          aws lambda get-function \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --query 'Configuration.{LastModified:LastModified,Runtime:Runtime,CodeSize:CodeSize}' \
+            --output table
+
+      - name: Test Lambda endpoint
+        run: |
+          echo "Testing API Gateway endpoint..."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://izgkkyaqq6.execute-api.us-east-1.amazonaws.com/prod/health)
+          
+          if [ $RESPONSE -eq 200 ]; then
+            echo "✓ API Gateway responding correctly (HTTP $RESPONSE)"
+          else
+            echo "⚠️ Unexpected response: HTTP $RESPONSE"
+            exit 1
+          fi
+
+      - name: Deployment summary
+        run: |
+          echo "============================================"
+          echo "✅ Deployment completed successfully!"
+          echo "============================================"
+          echo "Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+          echo "Region: ${{ env.AWS_REGION }}"
+          echo "Time: $(date -u)"
+          echo "Commit: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "============================================"
