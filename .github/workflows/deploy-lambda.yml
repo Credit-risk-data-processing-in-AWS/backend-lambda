@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'backend-lambda/**'
+      - 'lambda_function.py'
       - '.github/workflows/deploy-lambda.yml'
   workflow_dispatch: # Permite ejecutar manualmente desde GitHub UI
 
@@ -32,13 +32,12 @@ jobs:
 
       - name: Package Lambda function
         run: |
-          cd backend-lambda
           zip -r lambda_deployment.zip lambda_function.py
           echo "✓ Lambda packaged successfully"
 
       - name: Upload to S3
         run: |
-          aws s3 cp backend-lambda/lambda_deployment.zip \
+          aws s3 cp lambda_deployment.zip \
             s3://${{ env.S3_BUCKET }}/lambda/lambda_deployment.zip
           echo "✓ Uploaded to S3"
 
