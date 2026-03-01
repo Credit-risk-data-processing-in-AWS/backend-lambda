@@ -11,8 +11,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  LAMBDA_FUNCTION_NAME: ExperianRiskAPIFunction
-  S3_BUCKET: experian-risk-data-geoffrey
+  STACK_NAME: experian-risk-stack
 
 jobs:
   deploy:
@@ -30,6 +29,22 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Get Lambda and S3 names from CloudFormation
+        id: get_resources
+        run: |
+          LAMBDA_NAME=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?ExportName==`RiskApiLambdaName`].OutputValue' \
+            --output text)
+          S3_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?ExportName==`RiskDataBucketName`].OutputValue' \
+            --output text)
+          echo "lambda_name=$LAMBDA_NAME" >> $GITHUB_OUTPUT
+          echo "s3_bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
+          echo "Lambda Function: $LAMBDA_NAME"
+          echo "S3 Bucket: $S3_BUCKET"
+
       - name: Package Lambda function
         run: |
           zip -r lambda_deployment.zip lambda_function.py
@@ -38,27 +53,27 @@ jobs:
       - name: Upload to S3
         run: |
           aws s3 cp lambda_deployment.zip \
-            s3://${{ env.S3_BUCKET }}/lambda/lambda_deployment.zip
+            s3://${{ steps.get_resources.outputs.s3_bucket }}/lambda/lambda_deployment.zip
           echo "✓ Uploaded to S3"
 
       - name: Update Lambda function
         run: |
           aws lambda update-function-code \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-            --s3-bucket ${{ env.S3_BUCKET }} \
+            --function-name ${{ steps.get_resources.outputs.lambda_name }} \
+            --s3-bucket ${{ steps.get_resources.outputs.s3_bucket }} \
             --s3-key lambda/lambda_deployment.zip
           echo "✓ Lambda function updated"
 
       - name: Wait for Lambda update to complete
         run: |
           aws lambda wait function-updated \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }}
+            --function-name ${{ steps.get_resources.outputs.lambda_name }}
           echo "✓ Lambda is ready"
 
       - name: Get Lambda info
         run: |
           aws lambda get-function \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --function-name ${{ steps.get_resources.outputs.lambda_name }} \
             --query 'Configuration.{LastModified:LastModified,Runtime:Runtime,CodeSize:CodeSize}' \
             --output table
 
@@ -67,7 +82,7 @@ jobs:
           echo "============================================"
           echo "✅ Deployment completed successfully!"
           echo "============================================"
-          echo "Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+          echo "Function: ${{ steps.get_resources.outputs.lambda_name }}"
           echo "Region: ${{ env.AWS_REGION }}"
           echo "Time: $(date -u)"
           echo "Commit: ${{ github.sha }}"
